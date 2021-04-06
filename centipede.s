@@ -22,44 +22,49 @@
 	centipedeHeadColor: .word 0xff0000
 	mushroomColor: .word 0xf9ea44
 	fleaColor: .word 0xdf16c6
-	bulletColor: .word 0x90eeec
+	dartColor: .word 0x90eeec
 	bugBlasterColor: .word 0x19b6ea
 	
 	# starting positions
-	centipedeLocation: .word 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
+	centipedeLocations: .word 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
 	centipedeHeadLocation: .word 9 # the x location of the centipede's head
-	# centipedeHeadYLocation: .word 0 # the y location of the centipede's head
 	bugBlasterLocation: .word 816
 	
 	# centipede motion parameters
 	centipedeDirection: .word 1 #parameter designating centipede's direciton, 1 for right, 0 for stop, -1 for left
+	centipedeDirections: .word 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
 	leftBound: .word 0 #left bound where centipede will change direction
 	rightBound: .word 31 #right bound wehre centipede will change direction
 	
 .text
 
 ##### Initializations #####
-##### s0 stores the centipede's location
+##### s0 stores the centipede's locations
 ##### s1 stores the bug blaster location
 ##### s2 stores the dart location
 ##### S3 and S4 respectively stores the left and right bounds of the current row of the screen that the centipede is on.
-##### S5 stores the direction of the centipede's head
+##### S5 stores the centipede's direction
 ##### s6 stores whether or not the centipede has hit a mushroom, 0 means it didn't, 1 means it did
 ##### s7 stores the location of a flea
 ##### v1 will store the previous bug blaster location
+##### use a1 to detect dart and centipede collision
 
 init:
-	lw $s0, centipedeHeadLocation
+	la $s0, centipedeLocations
 	lw $s1, bugBlasterLocation
-	lw $s3, leftBound #left bound at zero
-	lw $s4, rightBound #right bound at 31
-	lw $s5, centipedeDirection # initial direction is headed to the right
-	add $v1, $v1, $s1 #set v1 also to bugBlasterLocation
-	jal draw_centipede
+	addi $s2, $zero, 0
+	lw $s3, leftBound # left bound at 0
+	lw $s4, rightBound # right bound at 31
+	la $s5, centipedeDirections
+	add $v1, $v1, $s1 # set v1 also to bugBlasterLocation
+	jal generate_random_flea_pos
+	jal draw_centipede # draw the initial centipede on screen.
 
 ##### Game Loop #####
 game_loop:
-
+	
+	beq $s7, $s1, game_over_screen
+	
 	# draw mushrooms
 	jal draw_mushrooms
 	
@@ -76,6 +81,7 @@ game_loop:
 		beq $t1, 0x6A, respond_to_j
 		beq $t1, 0x6B, respond_to_k
 		beq $t1, 0x78, respond_to_x
+		j keyboard_input_done
 	
 		respond_to_j:
 			move $v1, $s1 # store the old bug blaster location at v1 address
@@ -88,29 +94,73 @@ game_loop:
 			j keyboard_input_done
 	
 		respond_to_x:
-		
-			j keyboard_input_done
+			bgt $s2, 0, keyboard_input_done
+			addi $v1, $s1, -32
+			move $s2, $v1
 	
 	keyboard_input_done:
-		# does nothing
+		# nothing, move on
 		
+	# move dart, draw dart
+	move_dart:
+		beqz $s2, dart_move_done
+		addi $s2, $s2, -64
+		jal draw_dart
+	
+	bgt $s2, $zero, _next
+	dart_move_done:
+		move $s2, $zero
+	
+	
+	# move flea, draw flea
+	move_flea:
+		bge $s7, 0x0000044f, flea_move_done
+		addi, $s7, $s7, 32
+		jal draw_flea
+	
+	blt $s7, 0x0000044f, _next
+	
+	flea_move_done:
+		jal generate_random_flea_pos
+	
+	_next:
+		# nothing, move on
+	
 	# move centipede
-	centipede_move:
-		beq $s5, 1, centipede_move_right
-		beq $s5, 0, centipede_stop_move
-		beq $s5, -1, centipede_move_left
+	addi $a0, $zero, 10 #store loop count in a0
+	lw $t0, 0($s0) # load a word from centipede locations into t0
+	add $t9, $t0, $zero #store the last place the centipede passed through in t9
+	lw $t1, 0($s5) # load a word from centipede directions into t1
+	
+	arr_loop:
+		# goes through the centipede location and direction arrays and updates new values.
+		lw $t0, 0($s0) # load a word from centipede locations into t0
+		lw $t1, 0($s5) # load a word from centipede directions into t1
 		
-		#s5 is initially 1, so it moves right first.
+	centipede_move: 
+		beq $t1, 1, centipede_move_right
+		beq $t1, 0, centipede_stop_move
+		beq $t1, -1, centipede_move_left
+		
 		centipede_move_right:
-			beq $s0, $s4, centipede_stop_move #stop centipede from moving once it hits right bound
-			jal detect_mushroom_hit
-			beq $s6, 1, centipede_stop_move #if mushroom is hit
-			add $t9, $s0, $zero # store the last place the centipede passed through in t9
-			addi $s0, $s0, 1
-			j centipede_move_end
-
+			#jal detect_mushroom_hit
+			beq $t0, $s4, centipede_stop_move #stop centipede from moving once it hits right bound
+			#add $t9, $s0, $zero # store the last place the centipede passed through in t9
+			addi $t0, $t0, 1
+			sw $t0, 0($s0) # stores new position in s0
+			
+			j next_loop
+			
+		centipede_move_left:
+			#jal detect_mushroom_hit
+			beq $t0, $s3, centipede_stop_move #stop centipede from moving once it hits left bound
+			#add $t9, $t0, $zero #store the last place the centipede passed through in t9
+			addi $t0, $t0, -1
+			sw $t0, 0($s0)
+			
+			j next_loop
+			
 		centipede_stop_move:
-			addi $s0, $s0, 0
 			# The centipede stops because it either:
 			# - reached the same row as the Bug Blaster
 			# - reached the end of a row
@@ -121,26 +171,40 @@ game_loop:
 			beq $s0, 800, stop_centipede
 					
 			# otherwise keep going
-			add $t9, $s0, $zero #store the last place the centipede passed through in t9
-			addi $s3, $s3, 32 # add 32 to left bound to get new left bound
-			addi $s4, $s4, 32 # add 32 to right bound to get new right bound
-			addi $s0, $s0, 32 # transfer centipede down by one row.
-			beq $s0, $s3, centipede_change_right #change centipede's direction to right since it hit left bound
-			beq $s0, $s4, centipede_change_left #change centipede's direction to left since it hit right bound.
+			addi $t0, $t0, 32 # transfer centipede down by one row.
+			sw $t0, 0($s0)
+			addi $s3, $s3, 32 # new bounds
+			addi $s4, $s4, 32 # new bounds
+			beq $t0, $s3, centipede_change_right #change centipede's direction to right since it hit left bound
+			beq $t0, $s4, centipede_change_left #change centipede's direction to left since it hit right bound.
 			beq $s6, 1, mushroom_change_direction # change direction because it hit a mushroom.
-		
-		centipede_move_left:
-			beq $s0, $s3, centipede_stop_move #stops the centipede from moving once it hits the left bound
-			jal detect_mushroom_hit
-			beq $s6, 1, centipede_stop_move #if mushroom is hit
-			add $t9, $s0, $zero #store the last place the centipede passed through in t9
-			addi $s0, $s0, -1
 			
-			j centipede_move_end
-
+			centipede_change_right:
+				addi $t1, $t1, +2
+				sw $t1, 0($s5)
+				j next_loop
+			
+			centipede_change_left:
+				addi $t1, $t1, -2
+				sw $t1, 0($s5)
+				j next_loop
+		
+		next_loop:
+			addi $s0, $s0, 4 # point to next element
+			addi $s5, $s5, 4
+			
+			
+			addi $a0, $a0, -1 # decrement loop count
+			
+			beq $a0, $zero centipede_move_end
+			bne $a0, $zero arr_loop
+		
+	
 centipede_move_end:
 	# We've finished updating location and direction of the centipede, so draw the centipede to new location
 	#jal draw_centipede_head
+	la $s0, centipedeLocations # reset array pointer to first element
+	la $s5, centipedeDirections # reset array pointer to first element
 	jal draw_centipede
 
 	# Delay before restarting loop
@@ -152,120 +216,60 @@ centipede_move_end:
 
 
 ##### Centipede Direction Changes #####
-centipede_change_left: 
-	addi $s5, $s5, -2
-	j centipede_move_end
-
-centipede_change_right: 
-	addi $s5, $s5, +2
-	j centipede_move_end
 
 stop_centipede:
 	# centipede is stopped in one row, going back and forth
-	blt $s5, $zero, centipede_change_right
-	bgt $s5, $zero, centipede_change_left
-
-freeze_centipede:
-	# centipede completely stops (currently not called anywhere by the game loop)
-	blt $s5, $zero, add_to_direction
-	add_to_direction:
-		addi $s5, $s5, 1
-	bgt $s5, $zero, subtract_from_direction
-	subtract_from_direction:
-		addi $s5, $s5, -1
+	blt $t0, $zero, centipede_change_right
+	bgt $t0, $zero, centipede_change_left
 
 
 ##### Draw Centipede #####
 draw_centipede:
-	addi $a0, $zero, 9 # store loop count in a0
+	addi $a0, $zero, 0 # store loop count in a0
 
 draw_centipede_loop:
-	beq $a0, 9, draw_centipede_head
-	bne $a0, 9, draw_centipede_body
-
-draw_centipede_head:
-	# paint new block centipede color
-	lw $t1, centipedeHeadColor
-	lw $t2, backgroundColor
-	sll $t7, $s0, 2 # t7 = the offset of the head
-	add $t8, $t7, $gp # address of new block
-	sw $t1, 0($t8) # color in new block with head color
-	
-	# paint past block background color
-	sll $t7, $t9, 2 # t9 = where we want to paint the next block, in this case it's the location of the old head
-	add $t8, $t7, $gp # t8 = address of past block
-	sw $t2, 0($t8) # color in past block with background color
-	
-	add $t6, $s0, $zero # t6 is the location of whichever block has last been drawn. store head to t6.
-	
-	addi $a0, $a0, -1 # decrement loop count
-	j draw_centipede_loop
-	
+	beq $a0, 9, draw_centipede_head # if a0 = 9, draw the centipede head
+	bne $a0, 9, draw_centipede_body # if a0 != 9, draw the centipede body segment
 	
 draw_centipede_body:
-	lw $t1, centipedeBodyColor #t1 stores body color
-	lw $t2, backgroundColor #t2 stores background color
-	#t9 still stores past block location at this point.
-	sll $t7, $t9, 2 # t9 = location of block to be painted next, t7 is the offset of this block, new body segment goes here
-	add $t8, $t7, $gp # t8 = address of the past block
-	sw $t1, 0($t8) # color in this block with body segment color
+	# paint a block the color of the centipede body
+	bne $a0, 0, draw_body_seg
 	
-	sub $t3, $t6, $t9 # t3 = last location t6 - current block location t9
-	sub $t6, $t6, $t6
-	add $t6, $t6, $t9 # update the last drawn block with this block's location
-	
-	ble $t3, 9, draw_body_same_direction # if head - current block <= 9 units away, then draw in the same direction as the centipede's head
-	beq $t3, 32, draw_body_at_location # if head and body is exactly 32 units away, then draw at the location
-	bgt $t3, 9, draw_body_diff_direction # if head - current block > 9 units away, then draw in the direction opposite its head.
-	
-	addi $a0, $a0, -1 # decrement loop count
-	bne $a0, $zero, draw_centipede_loop #go back to loop if loop count is not zero
-	beq $a0, $zero, drawing_done # go to drawing_done, conclude the loop.
-	
-	draw_body_same_direction:
-		# store the next body segment location in t9, corresponding to s5 direction
-		beq $s5, 1, draw_same_right
-		beq $s5, -1, draw_same_left
-	
-		draw_same_right:
-			addi $t9, $t9, -1
+	draw_body_seg:	
+		lw $t0, centipedeBodyColor
+		lw $t1, 0($s0) # load a word from centipede locations array
+		sll $t2, $t1, 2 # store the offset in t2
+		add $t2, $t2, $gp # store address on display in t2
+		sw $t0, 0($t2)
+		addi $s0, $s0, 4 # point to next element
 		
-		draw_same_left:
-			addi $t9, $t9, 1
+		addi $a0, $a0, 1 # increase loop count
+		j draw_centipede_loop
 	
-		addi $a0, $a0, -1 # decrement loop count
-		bne $a0, $zero, draw_centipede_loop #go back to loop if loop count is not zero
-		beq $a0, $zero, drawing_done # go to drawing_done, conclude the loop.
+draw_centipede_head:
+	# paint a block the color of the centipede head
+	lw $t0, centipedeHeadColor
+	lw $t1, 0($s0) # load word from centipede locations array
+	sll $t2, $t1, 2 # store the offset in t2
+	add $t2, $t2, $gp # store address on display in t2
+	sw $t0, 0($t2)
 	
-	draw_body_diff_direction:
-		# store the next body segment location in t9, opposite of s5 centipede head direction
-		beq $s5, 1, draw_diff_right
-		beq $s5, -1, draw_diff_left
+	addi $s0, $s0, -36 # reset pointer to the beginning of the array
 	
-		draw_diff_right:
-			addi $t9, $t9, 1
+	bge $a0, 9 drawing_done # head is last to be drawn, so finish the drawing.
 	
-		draw_diff_left:
-			addi $t9, $t9, -1
-
-		addi $a0, $a0, -1 # decrement loop count
-		bne $a0, $zero, draw_centipede_loop #go back to loop if loop count is not zero
-		beq $a0, $zero, drawing_done # go to drawing_done, conclude the loop.
-	
-	draw_body_at_location:
-		addi $t9, $t9, 32
-		addi $a0, $a0, -1 # decrement loop count
-		bne $a0, $zero, draw_centipede_loop #go back to loop if loop count is not zero
-		beq $a0, $zero, drawing_done # go to drawing_done, conclude the loop.
-	
-			
 drawing_done:
-	# paint the block centipede went over background color
-	sll $t7, $t9, 2 # t9 = last location of the head block, t7 is the offset of the last block
-	add $t8, $t7, $gp # t8 = address of past block
-	sw $t2, 0($t8) # color in past block with background color
-	jr $ra
-
+	# paint in the background after the centipede as moved
+	lw $t0, backgroundColor
+	sll $t1, $t9, 2 # t1 stores offset of the location that is stored in t9
+	add $t2, $t1, $gp # t2 stores the address of the past location
+	sw $t0, 0($t2) # paint the block on the display background colored
+	
+	addi $a0, $a0, -9 # resets loop count
+	
+	jr $ra # jump back to wherever it is that last called draw_centipede.
+				
+	
 
 ##### Mushrooms #####
 draw_mushrooms:
@@ -281,22 +285,22 @@ draw_mushrooms:
 	jr $ra # returns to game_loop
 	
 detect_mushroom_hit:
-	beq $s5, 1, detect_mushroom_hit_r_direction #if centipede direction is right, detect if mushroom is hit from left side
-	beq $s5, -1, detect_mushroom_hit_l_direction #if centipede direction is left, detect if mushroom is hit from right side.
+	beq $t1, 1, detect_mushroom_hit_r_direction #if centipede direction is right, detect if mushroom is hit from left side
+	beq $t1, -1, detect_mushroom_hit_l_direction #if centipede direction is left, detect if mushroom is hit from right side.
 
 detect_mushroom_hit_r_direction:
-	addi $t3, $s0, 1 #store the next place the centipede will move to if it's going right, in t3
-	beq $t3, 0x00000050, mushroom_hit #mushroom is hit when if any of the mushroom positions are in he immediate future position
-	beq $t3, 0x00000096, mushroom_hit
+	addi $t3, $t0, 1 #store the next place the centipede will move to if it's going right, in t3
+	beq $t3, 0x00000096, mushroom_hit #mushroom is hit when if any of the mushroom positions are in he immediate future position
+	beq $t3, 0x00000050, mushroom_hit
 	beq $t3, 0x0000012c, mushroom_hit
 	beq $t3, 0x000001f9, mushroom_hit
 	beq $t3, 0x0000028a, mushroom_hit
 	jr $ra
 
 detect_mushroom_hit_l_direction:
-	addi $t3, $s0, -1 #store the next place the centipede will move to if it's going left, in t3
-	beq $t3, 0x00000050, mushroom_hit
-	beq $t3, 0x00000096, mushroom_hit 
+	addi $t3, $t0, -1 #store the next place the centipede will move to if it's going left, in t3
+	beq $t3, 0x00000096, mushroom_hit
+	beq $t3, 0x00000050, mushroom_hit 
 	beq $t3, 0x0000012c, mushroom_hit
 	beq $t3, 0x000001f9, mushroom_hit
 	beq $t3, 0x0000028a, mushroom_hit
@@ -315,10 +319,11 @@ mushroom_change_direction:
 	beq $s5, 1, centipede_change_left
 	beq $s5, -1, centipede_change_right
 
+
 ##### Bug Blaster #####
 
 draw_bug_blaster:
-	#draw bug blaster for demonstratiion purposes
+	# draw bug blaster
 		
 	lw $t4, bugBlasterColor
 	sll $t6, $s1, 2 # offset of bug blaster location
@@ -336,13 +341,110 @@ draw_bug_blaster:
 		sw $t4, 0($t7) # paint it background colored
 		
 		jr $ra
+		
+draw_dart:
+	lw $t0, dartColor
+	sll $t6, $s2, 2
+	add $t7, $t6, $gp
+	sw $t0, 0($t7)
 	
+	paint_background_after_dart:
+		lw $t4, backgroundColor
+		addi $t5, $s2, 64
+		sll $t6, $t5, 2
+		add $t7, $t6, $gp
+		sw $t4, 0($t7)
+		
+		jr $ra
 
-# check_keystroke:
+##### Flea #####
 
-# get_key_input:
-
+# create a flea
+generate_random_flea_pos:
+	li $v0, 42
+	li $a0, 0
+	li $a1, 31
+	syscall
+		
+	move $s7, $a0
+	jr $ra
 	
+	
+draw_flea:
+	lw $t0, fleaColor
+	sll $t6, $s7, 2
+	add $t7, $t6, $gp
+	sw $t0, 0($t7)
+	
+	paint_background_after_flea:
+		lw $t4, backgroundColor
+		addi $t5, $s7, -32
+		sll $t6, $t5, 2
+		add $t7, $t6, $gp
+		sw $t4, 0($t7)
+		
+		jr $ra
+		
+##### Game End Screens #####
+#Win
+win_screen:
+	lw $t1, textColor
+	# w
+	sw $t1, 292($gp)
+	sw $t1, 308($gp)
+	sw $t1, 420($gp)
+	sw $t1, 428($gp)
+	sw $t1, 436($gp)
+	sw $t1, 552($gp)
+	sw $t1, 560($gp)
+	# i
+	sw $t1, 316($gp)
+	sw $t1, 572($gp)
+	sw $t1, 700($gp)
+	# n
+	sw $t1, 452($gp)
+	sw $t1, 456($gp)
+	sw $t1, 460($gp)
+	sw $t1, 580($gp)
+	sw $t1, 592($gp)
+	sw $t1, 708($gp)
+	sw $t1, 720($gp)
+	
+	li $v0, 32 # sleep
+	li $a0, 1000
+	j win_screen
+	
+#Rip
+game_over_screen:
+	lw $t1, textColor
+	#r
+	sw $t1, 300($gp)
+	sw $t1, 304($gp) 
+	sw $t1, 308($gp)
+	sw $t1, 424($gp)
+	sw $t1, 552($gp)
+	sw $t1, 680($gp)
+	#i
+	sw $t1, 316($gp)
+	sw $t1, 572($gp)
+	sw $t1, 700($gp)
+	#p
+	sw $t1, 324($gp)
+	sw $t1, 328($gp)
+	sw $t1, 332($gp)
+	sw $t1, 452($gp)
+	sw $t1, 460($gp)
+	sw $t1, 580($gp)
+	sw $t1, 588($gp)
+	sw $t1, 708($gp)
+	sw $t1, 712($gp)
+	sw $t1, 836($gp)
+	
+	li $v0, 32 # sleep
+	li $a0, 1000
+	j game_over_screen
+
+
 ##### Exit #####
 
 Exit:
