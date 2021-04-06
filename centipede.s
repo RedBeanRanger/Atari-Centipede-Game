@@ -26,7 +26,7 @@
 	bugBlasterColor: .word 0x19b6ea
 	
 	# starting positions
-	centipedeLocations: .word 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
+	centipedeLocations: .word 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
 	centipedeHeadLocation: .word 9 # the x location of the centipede's head
 	bugBlasterLocation: .word 816
 	
@@ -44,26 +44,39 @@
 ##### s2 stores the dart location
 ##### S3 and S4 respectively stores the left and right bounds of the current row of the screen that the centipede is on.
 ##### S5 stores the centipede's direction
-##### s6 stores whether or not the centipede has hit a mushroom, 0 means it didn't, 1 means it did
+##### s6 stores progress towards victory
 ##### s7 stores the location of a flea
 ##### v1 will store the previous bug blaster location
-##### use a1 to detect dart and centipede collision
+
+# Fill the screen with background color
+draw_bg:
+	lw $t0, displayAddress		# Location of current pixel data
+	addi $t1, $t0, 4096		# Location of last pixel data. Hard-coded, 32x32 = 1024 pixels x 4 bytes = 4096.
+	lw $t2, backgroundColor		# Colour of the background
+	
+draw_bg_loop:
+	sw $t2, 0($t0)				# Store the colour
+	addi $t0, $t0, 4			# Next pixel
+	blt $t0, $t1, draw_bg_loop
 
 init:
 	la $s0, centipedeLocations
 	lw $s1, bugBlasterLocation
-	addi $s2, $zero, 0
+	move $s2, $zero # set dart location to 0 to begin with
 	lw $s3, leftBound # left bound at 0
 	lw $s4, rightBound # right bound at 31
 	la $s5, centipedeDirections
+	move $s6, $zero # set victory condition to zero to begin with
 	add $v1, $v1, $s1 # set v1 also to bugBlasterLocation
 	jal generate_random_flea_pos
 	jal draw_centipede # draw the initial centipede on screen.
+	
 
 ##### Game Loop #####
 game_loop:
 	
-	beq $s7, $s1, game_over_screen
+	beq $s7, $s1, game_over_screen # check game over condition
+	bge $s6, 3, win_screen # check victory condition - centipede has been hit 3 times
 	
 	# draw mushrooms
 	jal draw_mushrooms
@@ -103,18 +116,20 @@ game_loop:
 		
 	# move dart, draw dart
 	move_dart:
-		beqz $s2, dart_move_done
-		addi $s2, $s2, -64
+		ble $s2, $zero, dart_move_done # flea has gone off screen
+		addi $s2, $s2, -32
 		jal draw_dart
 	
-	bgt $s2, $zero, _next
+	bgt $s2, $zero, _next_move_flea # if there is still a moving dart, keep going
 	dart_move_done:
 		move $s2, $zero
-	
-	
+		
+	_next_move_flea:
+		#nothing, move on
+		
 	# move flea, draw flea
 	move_flea:
-		bge $s7, 0x0000044f, flea_move_done
+		bge $s7, 0x0000044f, flea_move_done # flea has gone off screen
 		addi, $s7, $s7, 32
 		jal draw_flea
 	
@@ -137,7 +152,14 @@ game_loop:
 		lw $t0, 0($s0) # load a word from centipede locations into t0
 		lw $t1, 0($s5) # load a word from centipede directions into t1
 		
+		bne $s2, $t0, _no_dart_hit # if no darts hit the centipede keep going
+		addi $s6, $s6, 1 # otherwise add 1 to s1
+		
+		_no_dart_hit:
+			#nothing, move on
+		
 	centipede_move: 
+		
 		beq $t1, 1, centipede_move_right
 		beq $t1, 0, centipede_stop_move
 		beq $t1, -1, centipede_move_left
@@ -350,7 +372,7 @@ draw_dart:
 	
 	paint_background_after_dart:
 		lw $t4, backgroundColor
-		addi $t5, $s2, 64
+		addi $t5, $s2, 32
 		sll $t6, $t5, 2
 		add $t7, $t6, $gp
 		sw $t4, 0($t7)
@@ -410,7 +432,16 @@ win_screen:
 	sw $t1, 708($gp)
 	sw $t1, 720($gp)
 	
-	li $v0, 32 # sleep
+	lw $t2, 0xffff0000 # check MMIO for keypress
+	bne $t2, 1, win_screen_next
+	
+	win_restart: # restart if r key is pressed
+		lw $t2, 0xffff0004 # read the input into $t2
+		beq $t2, 0x72, draw_bg # go all the way back to beginning and restart game if r is pressed.
+	
+	win_screen_next:
+	
+	li $v0, 32 # sleep before looping
 	li $a0, 1000
 	j win_screen
 	
@@ -440,7 +471,16 @@ game_over_screen:
 	sw $t1, 712($gp)
 	sw $t1, 836($gp)
 	
-	li $v0, 32 # sleep
+	lw $t2, 0xffff0000 # check MMIO for keypress
+	bne $t2, 1, game_over_next
+	
+	game_over_restart: # restart if r key is pressed
+		lw $t2, 0xffff0004 # read the input into $t2
+		beq $t2, 0x72, draw_bg # go all the way back to beginning and restart game if r is pressed.
+	
+	game_over_next:
+	
+	li $v0, 32 # sleep before looping
 	li $a0, 1000
 	j game_over_screen
 
